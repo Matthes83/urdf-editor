@@ -1,6 +1,7 @@
 # URDF Editor
 
 Ein web-basierter Editor zum Erstellen und Bearbeiten von URDF-Robotermodellen.
+Bisher nur auf MacOS getestet. 
 
 ## Features
 
