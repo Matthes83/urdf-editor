@@ -2,6 +2,7 @@
 
 Ein web-basierter Editor zum Erstellen und Bearbeiten von URDF-Robotermodellen.
 Bisher nur auf MacOS getestet. 
+Mit Claude Code erstellt. 
 
 ## Features
 
