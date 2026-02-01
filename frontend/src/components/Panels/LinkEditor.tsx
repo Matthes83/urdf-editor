@@ -5,168 +5,165 @@
 import { useSelectedLink, useEditorStore } from '../../stores/editorStore';
 import { Input, Slider, Button } from '../ui';
 import { Trash2 } from 'lucide-react';
-import type { BoxGeometry, CylinderGeometry, SphereGeometry } from '../../types/urdf';
+import type { BoxGeometry, CylinderGeometry, SphereGeometry, InertiaMatrix } from '../../types/urdf';
+
+// Calculate inertia for different geometry types
+function calculateInertia(geometryType: string, mass: number, dimensions: number[]): InertiaMatrix {
+  if (geometryType === 'box') {
+    const [x, y, z] = dimensions;
+    return {
+      ixx: (mass / 12) * (y * y + z * z),
+      ixy: 0, ixz: 0,
+      iyy: (mass / 12) * (x * x + z * z),
+      iyz: 0,
+      izz: (mass / 12) * (x * x + y * y),
+    };
+  } else if (geometryType === 'cylinder') {
+    const [r, h] = dimensions;
+    return {
+      ixx: (mass / 12) * (3 * r * r + h * h),
+      ixy: 0, ixz: 0,
+      iyy: (mass / 12) * (3 * r * r + h * h),
+      iyz: 0,
+      izz: (mass / 2) * r * r,
+    };
+  } else {
+    // sphere
+    const r = dimensions[0];
+    const i = (2 / 5) * mass * r * r;
+    return { ixx: i, ixy: 0, ixz: 0, iyy: i, iyz: 0, izz: i };
+  }
+}
 
 export function LinkEditor() {
   const link = useSelectedLink();
   const updateLink = useEditorStore((state) => state.updateLink);
   const deleteLink = useEditorStore((state) => state.deleteLink);
+  // Get fresh link data directly from store to avoid stale closures
+  const getLink = useEditorStore((state) => state.getLink);
 
   if (!link) return null;
 
   const geometry = link.visual?.geometry;
   const material = link.visual?.material;
+  const linkName = link.name;
 
   const handlePositionChange = (axis: 0 | 1 | 2, value: number) => {
-    const newPosition = [...link.editor_position] as [number, number, number];
+    // Get fresh link data
+    const currentLink = getLink(linkName);
+    if (!currentLink) return;
+    const newPosition = [...currentLink.editor_position] as [number, number, number];
     newPosition[axis] = value;
-    updateLink(link.name, { editor_position: newPosition });
+    updateLink(linkName, { editor_position: newPosition });
   };
 
   const handleColorChange = (colorHex: string) => {
+    const currentLink = getLink(linkName);
+    if (!currentLink?.visual) return;
+
     const r = parseInt(colorHex.slice(1, 3), 16) / 255;
     const g = parseInt(colorHex.slice(3, 5), 16) / 255;
     const b = parseInt(colorHex.slice(5, 7), 16) / 255;
 
-    if (link.visual) {
-      updateLink(link.name, {
-        visual: {
-          ...link.visual,
-          material: {
-            ...link.visual.material,
-            name: link.visual.material?.name || 'material',
-            color: [r, g, b, 1.0],
-          },
+    updateLink(linkName, {
+      visual: {
+        ...currentLink.visual,
+        material: {
+          ...currentLink.visual.material,
+          name: currentLink.visual.material?.name || 'material',
+          color: [r, g, b, 1.0],
         },
-      });
-    }
-  };
-
-  // Update box geometry
-  const handleBoxChange = (size: [number, number, number]) => {
-    if (!link.visual || !geometry || geometry.type !== 'box') return;
-
-    const newGeometry: BoxGeometry = { type: 'box', size };
-
-    updateLink(link.name, {
-      visual: { ...link.visual, geometry: newGeometry },
-      collision: link.collision ? { ...link.collision, geometry: newGeometry } : null,
+      },
     });
-
-    // Recalculate inertia
-    if (link.inertial) {
-      const mass = link.inertial.mass;
-      const [x, y, z] = size;
-      updateLink(link.name, {
-        inertial: {
-          ...link.inertial,
-          inertia: {
-            ixx: (mass / 12) * (y * y + z * z),
-            ixy: 0,
-            ixz: 0,
-            iyy: (mass / 12) * (x * x + z * z),
-            iyz: 0,
-            izz: (mass / 12) * (x * x + y * y),
-          },
-        },
-      });
-    }
   };
 
-  // Update cylinder geometry
-  const handleCylinderChange = (radius: number, length: number) => {
-    if (!link.visual || !geometry || geometry.type !== 'cylinder') return;
+  // Update box geometry - get fresh data to avoid stale closures
+  const handleBoxDimensionChange = (axis: 0 | 1 | 2, value: number) => {
+    const currentLink = getLink(linkName);
+    if (!currentLink?.visual?.geometry || currentLink.visual.geometry.type !== 'box') return;
 
+    const currentSize = currentLink.visual.geometry.size;
+    const newSize: [number, number, number] = [...currentSize];
+    newSize[axis] = value;
+
+    const currentMass = currentLink.inertial?.mass ?? 1;
+    const newGeometry: BoxGeometry = { type: 'box', size: newSize };
+    const inertia = calculateInertia('box', currentMass, newSize);
+
+    updateLink(linkName, {
+      visual: { ...currentLink.visual, geometry: newGeometry },
+      collision: currentLink.collision ? { ...currentLink.collision, geometry: newGeometry } : null,
+      inertial: currentLink.inertial ? { ...currentLink.inertial, inertia } : null,
+    });
+  };
+
+  // Update cylinder geometry - get fresh data
+  const handleCylinderDimensionChange = (field: 'radius' | 'length', value: number) => {
+    const currentLink = getLink(linkName);
+    if (!currentLink?.visual?.geometry || currentLink.visual.geometry.type !== 'cylinder') return;
+
+    const current = currentLink.visual.geometry;
+    const radius = field === 'radius' ? value : current.radius;
+    const length = field === 'length' ? value : current.length;
+
+    const currentMass = currentLink.inertial?.mass ?? 1;
     const newGeometry: CylinderGeometry = { type: 'cylinder', radius, length };
+    const inertia = calculateInertia('cylinder', currentMass, [radius, length]);
 
-    updateLink(link.name, {
-      visual: { ...link.visual, geometry: newGeometry },
-      collision: link.collision ? { ...link.collision, geometry: newGeometry } : null,
+    updateLink(linkName, {
+      visual: { ...currentLink.visual, geometry: newGeometry },
+      collision: currentLink.collision ? { ...currentLink.collision, geometry: newGeometry } : null,
+      inertial: currentLink.inertial ? { ...currentLink.inertial, inertia } : null,
     });
-
-    // Recalculate inertia
-    if (link.inertial) {
-      const mass = link.inertial.mass;
-      updateLink(link.name, {
-        inertial: {
-          ...link.inertial,
-          inertia: {
-            ixx: (mass / 12) * (3 * radius * radius + length * length),
-            ixy: 0,
-            ixz: 0,
-            iyy: (mass / 12) * (3 * radius * radius + length * length),
-            iyz: 0,
-            izz: (mass / 2) * radius * radius,
-          },
-        },
-      });
-    }
   };
 
-  // Update sphere geometry
+  // Update sphere geometry - get fresh data
   const handleSphereChange = (radius: number) => {
-    if (!link.visual || !geometry || geometry.type !== 'sphere') return;
+    const currentLink = getLink(linkName);
+    if (!currentLink?.visual?.geometry || currentLink.visual.geometry.type !== 'sphere') return;
 
+    const currentMass = currentLink.inertial?.mass ?? 1;
     const newGeometry: SphereGeometry = { type: 'sphere', radius };
+    const inertia = calculateInertia('sphere', currentMass, [radius]);
 
-    updateLink(link.name, {
-      visual: { ...link.visual, geometry: newGeometry },
-      collision: link.collision ? { ...link.collision, geometry: newGeometry } : null,
+    updateLink(linkName, {
+      visual: { ...currentLink.visual, geometry: newGeometry },
+      collision: currentLink.collision ? { ...currentLink.collision, geometry: newGeometry } : null,
+      inertial: currentLink.inertial ? { ...currentLink.inertial, inertia } : null,
     });
-
-    // Recalculate inertia
-    if (link.inertial) {
-      const mass = link.inertial.mass;
-      const i = (2 / 5) * mass * radius * radius;
-      updateLink(link.name, {
-        inertial: {
-          ...link.inertial,
-          inertia: { ixx: i, ixy: 0, ixz: 0, iyy: i, iyz: 0, izz: i },
-        },
-      });
-    }
   };
 
-  // Update mass and recalculate inertia
-  const handleMassChange = (mass: number) => {
-    if (!link.inertial || !geometry) return;
+  // Update mass - get fresh data
+  const handleMassChange = (newMass: number) => {
+    const currentLink = getLink(linkName);
+    if (!currentLink?.inertial || !currentLink.visual?.geometry) return;
 
-    let inertia = link.inertial.inertia;
-
-    if (geometry.type === 'box') {
-      const [x, y, z] = geometry.size;
-      inertia = {
-        ixx: (mass / 12) * (y * y + z * z),
-        ixy: 0,
-        ixz: 0,
-        iyy: (mass / 12) * (x * x + z * z),
-        iyz: 0,
-        izz: (mass / 12) * (x * x + y * y),
-      };
-    } else if (geometry.type === 'cylinder') {
-      const r = geometry.radius;
-      const h = geometry.length;
-      inertia = {
-        ixx: (mass / 12) * (3 * r * r + h * h),
-        ixy: 0,
-        ixz: 0,
-        iyy: (mass / 12) * (3 * r * r + h * h),
-        iyz: 0,
-        izz: (mass / 2) * r * r,
-      };
-    } else if (geometry.type === 'sphere') {
-      const i = (2 / 5) * mass * geometry.radius * geometry.radius;
-      inertia = { ixx: i, ixy: 0, ixz: 0, iyy: i, iyz: 0, izz: i };
+    const geo = currentLink.visual.geometry;
+    let dimensions: number[];
+    if (geo.type === 'box') {
+      dimensions = geo.size;
+    } else if (geo.type === 'cylinder') {
+      dimensions = [geo.radius, geo.length];
+    } else if (geo.type === 'sphere') {
+      dimensions = [geo.radius];
+    } else {
+      // mesh - just update mass without recalculating inertia
+      updateLink(linkName, {
+        inertial: { ...currentLink.inertial, mass: newMass },
+      });
+      return;
     }
 
-    updateLink(link.name, {
-      inertial: { ...link.inertial, mass, inertia },
+    const inertia = calculateInertia(geo.type, newMass, dimensions);
+
+    updateLink(linkName, {
+      inertial: { ...currentLink.inertial, mass: newMass, inertia },
     });
   };
 
   const handleDelete = () => {
-    if (confirm(`"${link.name}" loeschen? Verbundene Gelenke werden ebenfalls geloescht.`)) {
-      deleteLink(link.name);
+    if (confirm(`"${linkName}" loeschen? Verbundene Gelenke werden ebenfalls geloescht.`)) {
+      deleteLink(linkName);
     }
   };
 
@@ -175,28 +172,39 @@ export function LinkEditor() {
     : link.editor_color;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" key={linkName}>
       {/* Name */}
       <Input
         label="Name"
-        value={link.name}
-        onChange={(e) => updateLink(link.name, { name: e.target.value })}
+        value={linkName}
+        onChange={(e) => updateLink(linkName, { name: e.target.value })}
       />
 
       {/* Position */}
       <div>
         <label className="text-xs text-gray-400 block mb-2">Position (m)</label>
         <div className="grid grid-cols-3 gap-2">
-          {(['X', 'Y', 'Z'] as const).map((axis, i) => (
-            <Input
-              key={axis}
-              label={axis}
-              type="number"
-              step="0.1"
-              value={link.editor_position[i]}
-              onChange={(e) => handlePositionChange(i as 0 | 1 | 2, parseFloat(e.target.value) || 0)}
-            />
-          ))}
+          <Input
+            label="X"
+            type="number"
+            step={0.1}
+            value={link.editor_position[0]}
+            onChange={(e) => handlePositionChange(0, parseFloat(e.target.value) || 0)}
+          />
+          <Input
+            label="Y"
+            type="number"
+            step={0.1}
+            value={link.editor_position[1]}
+            onChange={(e) => handlePositionChange(1, parseFloat(e.target.value) || 0)}
+          />
+          <Input
+            label="Z"
+            type="number"
+            step={0.1}
+            value={link.editor_position[2]}
+            onChange={(e) => handlePositionChange(2, parseFloat(e.target.value) || 0)}
+          />
         </div>
       </div>
 
@@ -212,35 +220,26 @@ export function LinkEditor() {
               <Input
                 label="Breite"
                 type="number"
-                step="0.05"
-                min="0.01"
+                step={0.05}
+                min={0.01}
                 value={geometry.size[0]}
-                onChange={(e) => {
-                  const val = parseFloat(e.target.value) || 0.1;
-                  handleBoxChange([val, geometry.size[1], geometry.size[2]]);
-                }}
+                onChange={(e) => handleBoxDimensionChange(0, parseFloat(e.target.value) || 0.1)}
               />
               <Input
                 label="Tiefe"
                 type="number"
-                step="0.05"
-                min="0.01"
+                step={0.05}
+                min={0.01}
                 value={geometry.size[1]}
-                onChange={(e) => {
-                  const val = parseFloat(e.target.value) || 0.1;
-                  handleBoxChange([geometry.size[0], val, geometry.size[2]]);
-                }}
+                onChange={(e) => handleBoxDimensionChange(1, parseFloat(e.target.value) || 0.1)}
               />
               <Input
                 label="Hoehe"
                 type="number"
-                step="0.05"
-                min="0.01"
+                step={0.05}
+                min={0.01}
                 value={geometry.size[2]}
-                onChange={(e) => {
-                  const val = parseFloat(e.target.value) || 0.1;
-                  handleBoxChange([geometry.size[0], geometry.size[1], val]);
-                }}
+                onChange={(e) => handleBoxDimensionChange(2, parseFloat(e.target.value) || 0.1)}
               />
             </div>
           )}
@@ -250,24 +249,18 @@ export function LinkEditor() {
               <Input
                 label="Radius (m)"
                 type="number"
-                step="0.05"
-                min="0.01"
+                step={0.05}
+                min={0.01}
                 value={geometry.radius}
-                onChange={(e) => {
-                  const val = parseFloat(e.target.value) || 0.1;
-                  handleCylinderChange(val, geometry.length);
-                }}
+                onChange={(e) => handleCylinderDimensionChange('radius', parseFloat(e.target.value) || 0.1)}
               />
               <Input
                 label="Laenge (m)"
                 type="number"
-                step="0.05"
-                min="0.01"
+                step={0.05}
+                min={0.01}
                 value={geometry.length}
-                onChange={(e) => {
-                  const val = parseFloat(e.target.value) || 0.1;
-                  handleCylinderChange(geometry.radius, val);
-                }}
+                onChange={(e) => handleCylinderDimensionChange('length', parseFloat(e.target.value) || 0.1)}
               />
             </div>
           )}
@@ -276,8 +269,8 @@ export function LinkEditor() {
             <Input
               label="Radius (m)"
               type="number"
-              step="0.05"
-              min="0.01"
+              step={0.05}
+              min={0.01}
               value={geometry.radius}
               onChange={(e) => {
                 const val = parseFloat(e.target.value) || 0.1;
@@ -308,19 +301,21 @@ export function LinkEditor() {
           <Input
             label="Masse (kg)"
             type="number"
-            step="0.1"
-            min="0.01"
+            step={0.1}
+            min={0.01}
             value={link.inertial.mass}
             onChange={(e) => handleMassChange(parseFloat(e.target.value) || 0.1)}
           />
-          <Slider
-            label=""
-            value={link.inertial.mass}
-            onChange={handleMassChange}
-            min={0.01}
-            max={100}
-            step={0.1}
-          />
+          <div className="mt-2">
+            <Slider
+              label=""
+              value={link.inertial.mass}
+              onChange={handleMassChange}
+              min={0.01}
+              max={100}
+              step={0.1}
+            />
+          </div>
         </div>
       )}
 

@@ -1,7 +1,7 @@
 """URDF data models using Pydantic for validation and serialization."""
 
 from pydantic import BaseModel, Field
-from typing import Optional, Union, Annotated
+from typing import Optional, Union, Annotated, Literal
 from enum import Enum
 import uuid
 
@@ -15,26 +15,26 @@ class GeometryType(str, Enum):
 
 class BoxGeometry(BaseModel):
     """Box geometry with size in x, y, z dimensions."""
-    type: str = Field(default="box", frozen=True)
+    type: Literal["box"] = "box"
     size: tuple[float, float, float] = (1.0, 1.0, 1.0)
 
 
 class CylinderGeometry(BaseModel):
     """Cylinder geometry with radius and length."""
-    type: str = Field(default="cylinder", frozen=True)
+    type: Literal["cylinder"] = "cylinder"
     radius: float = 0.5
     length: float = 1.0
 
 
 class SphereGeometry(BaseModel):
     """Sphere geometry with radius."""
-    type: str = Field(default="sphere", frozen=True)
+    type: Literal["sphere"] = "sphere"
     radius: float = 0.5
 
 
 class MeshGeometry(BaseModel):
     """Mesh geometry from external file."""
-    type: str = Field(default="mesh", frozen=True)
+    type: Literal["mesh"] = "mesh"
     filename: str
     scale: tuple[float, float, float] = (1.0, 1.0, 1.0)
 

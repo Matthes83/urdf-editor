@@ -242,15 +242,17 @@ export const useEditorStore = create<EditorState>()(
 // Hook for accessing temporal (undo/redo) controls
 export const useTemporalStore = () => useEditorStore.temporal.getState();
 
-// Selector hooks for common selections
+// Selector hooks for common selections - directly access state for proper reactivity
 export const useSelectedLink = () => {
-  const selectedLinkId = useEditorStore((state) => state.selectedLinkId);
-  const getLink = useEditorStore((state) => state.getLink);
-  return selectedLinkId ? getLink(selectedLinkId) : null;
+  return useEditorStore((state) => {
+    if (!state.selectedLinkId) return null;
+    return state.robot.links.find((l) => l.name === state.selectedLinkId) || null;
+  });
 };
 
 export const useSelectedJoint = () => {
-  const selectedJointId = useEditorStore((state) => state.selectedJointId);
-  const getJoint = useEditorStore((state) => state.getJoint);
-  return selectedJointId ? getJoint(selectedJointId) : null;
+  return useEditorStore((state) => {
+    if (!state.selectedJointId) return null;
+    return state.robot.joints.find((j) => j.name === state.selectedJointId) || null;
+  });
 };

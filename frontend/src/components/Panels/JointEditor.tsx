@@ -27,19 +27,24 @@ export function JointEditor() {
   const joint = useSelectedJoint();
   const updateJoint = useEditorStore((state) => state.updateJoint);
   const deleteJoint = useEditorStore((state) => state.deleteJoint);
+  const getJoint = useEditorStore((state) => state.getJoint);
   const [useDegrees, setUseDegrees] = useState(true);
 
   if (!joint) return null;
 
+  const jointName = joint.name;
   const isRevolute = joint.type === 'revolute';
   const isPrismatic = joint.type === 'prismatic';
   const hasLimits = joint.limit && (isRevolute || isPrismatic);
 
   const handleTypeChange = (type: string) => {
+    const currentJoint = getJoint(jointName);
+    if (!currentJoint) return;
+
     const newType = type as JointType;
     const updates: Partial<typeof joint> = { type: newType };
 
-    if ((newType === 'revolute' || newType === 'prismatic') && !joint.limit) {
+    if ((newType === 'revolute' || newType === 'prismatic') && !currentJoint.limit) {
       updates.limit = {
         lower: newType === 'revolute' ? -Math.PI : -1.0,
         upper: newType === 'revolute' ? Math.PI : 1.0,
@@ -50,12 +55,12 @@ export function JointEditor() {
     if (newType === 'fixed') {
       updates.limit = undefined;
     }
-    updateJoint(joint.name, updates);
+    updateJoint(jointName, updates);
   };
 
   const handleDelete = () => {
-    if (confirm(`"${joint.name}" loeschen?`)) {
-      deleteJoint(joint.name);
+    if (confirm(`"${jointName}" loeschen?`)) {
+      deleteJoint(jointName);
     }
   };
 
@@ -83,12 +88,12 @@ export function JointEditor() {
   const maxLimit = joint.limit ? getDisplayValue(joint.limit.upper) : 180;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" key={jointName}>
       {/* Name */}
       <Input
         label="Name"
-        value={joint.name}
-        onChange={(e) => updateJoint(joint.name, { name: e.target.value })}
+        value={jointName}
+        onChange={(e) => updateJoint(jointName, { name: e.target.value })}
       />
 
       {/* Parent / Child */}
@@ -151,7 +156,7 @@ export function JointEditor() {
             value={currentAngle}
             onChange={(e) => {
               const val = parseFloat(e.target.value);
-              updateJoint(joint.name, { current_value: toStoredValue(val) });
+              updateJoint(jointName, { current_value: toStoredValue(val) });
             }}
             className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
           />
@@ -173,7 +178,7 @@ export function JointEditor() {
                 let val = parseFloat(e.target.value) || 0;
                 // Clamp to limits
                 val = Math.max(minLimit, Math.min(maxLimit, val));
-                updateJoint(joint.name, { current_value: toStoredValue(val) });
+                updateJoint(jointName, { current_value: toStoredValue(val) });
               }}
             />
           </div>
@@ -188,7 +193,7 @@ export function JointEditor() {
                   variant={Math.abs(currentAngle - angle) < 1 ? 'primary' : 'default'}
                   onClick={() => {
                     const clampedAngle = Math.max(minLimit, Math.min(maxLimit, angle));
-                    updateJoint(joint.name, { current_value: degToRad(clampedAngle) });
+                    updateJoint(jointName, { current_value: degToRad(clampedAngle) });
                   }}
                   className="flex-1 text-xs"
                   disabled={angle < minLimit || angle > maxLimit}
@@ -211,7 +216,7 @@ export function JointEditor() {
                 key={preset.label}
                 variant={isAxisSelected(preset.value) ? 'primary' : 'default'}
                 size="sm"
-                onClick={() => updateJoint(joint.name, { axis: preset.value })}
+                onClick={() => updateJoint(jointName, { axis: preset.value })}
                 className="flex-1"
               >
                 {preset.label}
@@ -232,9 +237,11 @@ export function JointEditor() {
               step={isRevolute && useDegrees ? 1 : 0.1}
               value={getDisplayValue(joint.limit.lower)}
               onChange={(e) => {
+                const currentJoint = getJoint(jointName);
+                if (!currentJoint?.limit) return;
                 const val = parseFloat(e.target.value) || 0;
-                updateJoint(joint.name, {
-                  limit: { ...joint.limit!, lower: toStoredValue(val) },
+                updateJoint(jointName, {
+                  limit: { ...currentJoint.limit, lower: toStoredValue(val) },
                 });
               }}
             />
@@ -244,9 +251,11 @@ export function JointEditor() {
               step={isRevolute && useDegrees ? 1 : 0.1}
               value={getDisplayValue(joint.limit.upper)}
               onChange={(e) => {
+                const currentJoint = getJoint(jointName);
+                if (!currentJoint?.limit) return;
                 const val = parseFloat(e.target.value) || 0;
-                updateJoint(joint.name, {
-                  limit: { ...joint.limit!, upper: toStoredValue(val) },
+                updateJoint(jointName, {
+                  limit: { ...currentJoint.limit, upper: toStoredValue(val) },
                 });
               }}
             />
@@ -257,11 +266,13 @@ export function JointEditor() {
               type="number"
               step="1"
               value={joint.limit.effort}
-              onChange={(e) =>
-                updateJoint(joint.name, {
-                  limit: { ...joint.limit!, effort: parseFloat(e.target.value) || 0 },
-                })
-              }
+              onChange={(e) => {
+                const currentJoint = getJoint(jointName);
+                if (!currentJoint?.limit) return;
+                updateJoint(jointName, {
+                  limit: { ...currentJoint.limit, effort: parseFloat(e.target.value) || 0 },
+                });
+              }}
             />
             <Input
               label={`Max Geschw.`}
@@ -269,9 +280,11 @@ export function JointEditor() {
               step="0.1"
               value={getDisplayValue(joint.limit.velocity)}
               onChange={(e) => {
+                const currentJoint = getJoint(jointName);
+                if (!currentJoint?.limit) return;
                 const val = parseFloat(e.target.value) || 0;
-                updateJoint(joint.name, {
-                  limit: { ...joint.limit!, velocity: toStoredValue(val) },
+                updateJoint(jointName, {
+                  limit: { ...currentJoint.limit, velocity: toStoredValue(val) },
                 });
               }}
             />
@@ -291,9 +304,11 @@ export function JointEditor() {
               step="0.01"
               value={joint.origin.xyz[i]}
               onChange={(e) => {
-                const xyz = [...joint.origin.xyz] as [number, number, number];
+                const currentJoint = getJoint(jointName);
+                if (!currentJoint) return;
+                const xyz = [...currentJoint.origin.xyz] as [number, number, number];
                 xyz[i] = parseFloat(e.target.value) || 0;
-                updateJoint(joint.name, { origin: { ...joint.origin, xyz } });
+                updateJoint(jointName, { origin: { ...currentJoint.origin, xyz } });
               }}
             />
           ))}
@@ -307,11 +322,12 @@ export function JointEditor() {
           <Slider
             label="Daempfung"
             value={joint.dynamics?.damping || 0}
-            onChange={(v) =>
-              updateJoint(joint.name, {
-                dynamics: { damping: v, friction: joint.dynamics?.friction || 0 },
-              })
-            }
+            onChange={(v) => {
+              const currentJoint = getJoint(jointName);
+              updateJoint(jointName, {
+                dynamics: { damping: v, friction: currentJoint?.dynamics?.friction || 0 },
+              });
+            }}
             min={0}
             max={100}
             step={0.1}
@@ -319,11 +335,12 @@ export function JointEditor() {
           <Slider
             label="Reibung"
             value={joint.dynamics?.friction || 0}
-            onChange={(v) =>
-              updateJoint(joint.name, {
-                dynamics: { damping: joint.dynamics?.damping || 0, friction: v },
-              })
-            }
+            onChange={(v) => {
+              const currentJoint = getJoint(jointName);
+              updateJoint(jointName, {
+                dynamics: { damping: currentJoint?.dynamics?.damping || 0, friction: v },
+              });
+            }}
             min={0}
             max={100}
             step={0.1}

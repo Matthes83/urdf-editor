@@ -229,14 +229,37 @@ class URDFService:
         """Generate URDF XML from internal model."""
         root = etree.Element('robot', name=robot.name)
 
-        # Add links
+        # Build link lookup for connection point resolution
+        link_map = {link.name: link for link in robot.links}
+
+        # Build joint lookup: child_link_name -> joint (to find a link's parent joint)
+        joint_map = {joint.child: joint for joint in robot.joints}
+
+        # Add links with adjusted visual origins for child links
         for link in robot.links:
-            link_elem = self._generate_link_element(link)
+            # Check if this link is a child of a joint
+            parent_joint = joint_map.get(link.name)
+            child_cp_offset = None
+
+            if parent_joint and parent_joint.child_connection_point_id:
+                # Find the child connection point position
+                for cp in link.connection_points:
+                    if cp.id == parent_joint.child_connection_point_id:
+                        # The visual needs to be offset by negative of child CP
+                        # because in URDF, the link frame is at the joint (child CP location)
+                        child_cp_offset = (
+                            -cp.position[0],
+                            -cp.position[1],
+                            -cp.position[2]
+                        )
+                        break
+
+            link_elem = self._generate_link_element(link, child_cp_offset)
             root.append(link_elem)
 
-        # Add joints
+        # Add joints with proper origin based on connection points
         for joint in robot.joints:
-            joint_elem = self._generate_joint_element(joint)
+            joint_elem = self._generate_joint_element(joint, link_map, joint_map)
             root.append(joint_elem)
 
         # Format XML with proper indentation
@@ -249,31 +272,49 @@ class URDFService:
 
         return xml_string
 
-    def _generate_link_element(self, link: Link) -> etree._Element:
-        """Generate XML element for link."""
+    def _generate_link_element(self, link: Link, child_cp_offset: tuple = None) -> etree._Element:
+        """Generate XML element for link.
+
+        Args:
+            link: The link to generate XML for
+            child_cp_offset: If this link is a child, offset to apply to visual/collision/inertial
+                           origins to account for the link frame being at the child connection point
+        """
         elem = etree.Element('link', name=link.name)
 
         if link.visual:
-            visual_elem = self._generate_visual_element(link.visual)
+            visual_elem = self._generate_visual_element(link.visual, child_cp_offset)
             elem.append(visual_elem)
 
         if link.collision:
-            collision_elem = self._generate_collision_element(link.collision)
+            collision_elem = self._generate_collision_element(link.collision, child_cp_offset)
             elem.append(collision_elem)
 
         if link.inertial:
-            inertial_elem = self._generate_inertial_element(link.inertial)
+            inertial_elem = self._generate_inertial_element(link.inertial, child_cp_offset)
             elem.append(inertial_elem)
 
         return elem
 
-    def _generate_visual_element(self, visual: Visual) -> etree._Element:
+    def _generate_visual_element(self, visual: Visual, child_cp_offset: tuple = None) -> etree._Element:
         """Generate XML element for visual."""
         elem = etree.Element('visual')
         if visual.name:
             elem.set('name', visual.name)
 
-        elem.append(self._generate_origin_element(visual.origin))
+        # Apply child connection point offset if provided
+        origin = visual.origin
+        if child_cp_offset:
+            origin = Origin(
+                xyz=(
+                    visual.origin.xyz[0] + child_cp_offset[0],
+                    visual.origin.xyz[1] + child_cp_offset[1],
+                    visual.origin.xyz[2] + child_cp_offset[2],
+                ),
+                rpy=visual.origin.rpy
+            )
+
+        elem.append(self._generate_origin_element(origin))
         elem.append(self._generate_geometry_element(visual.geometry))
 
         if visual.material:
@@ -281,22 +322,46 @@ class URDFService:
 
         return elem
 
-    def _generate_collision_element(self, collision: Collision) -> etree._Element:
+    def _generate_collision_element(self, collision: Collision, child_cp_offset: tuple = None) -> etree._Element:
         """Generate XML element for collision."""
         elem = etree.Element('collision')
         if collision.name:
             elem.set('name', collision.name)
 
-        elem.append(self._generate_origin_element(collision.origin))
+        # Apply child connection point offset if provided
+        origin = collision.origin
+        if child_cp_offset:
+            origin = Origin(
+                xyz=(
+                    collision.origin.xyz[0] + child_cp_offset[0],
+                    collision.origin.xyz[1] + child_cp_offset[1],
+                    collision.origin.xyz[2] + child_cp_offset[2],
+                ),
+                rpy=collision.origin.rpy
+            )
+
+        elem.append(self._generate_origin_element(origin))
         elem.append(self._generate_geometry_element(collision.geometry))
 
         return elem
 
-    def _generate_inertial_element(self, inertial: Inertial) -> etree._Element:
+    def _generate_inertial_element(self, inertial: Inertial, child_cp_offset: tuple = None) -> etree._Element:
         """Generate XML element for inertial."""
         elem = etree.Element('inertial')
 
-        elem.append(self._generate_origin_element(inertial.origin))
+        # Apply child connection point offset if provided
+        origin = inertial.origin
+        if child_cp_offset:
+            origin = Origin(
+                xyz=(
+                    inertial.origin.xyz[0] + child_cp_offset[0],
+                    inertial.origin.xyz[1] + child_cp_offset[1],
+                    inertial.origin.xyz[2] + child_cp_offset[2],
+                ),
+                rpy=inertial.origin.rpy
+            )
+
+        elem.append(self._generate_origin_element(origin))
 
         mass_elem = etree.SubElement(elem, 'mass', value=str(inertial.mass))
 
@@ -352,14 +417,19 @@ class URDFService:
 
         return elem
 
-    def _generate_joint_element(self, joint: Joint) -> etree._Element:
-        """Generate XML element for joint."""
+    def _generate_joint_element(self, joint: Joint, link_map: dict, joint_map: dict) -> etree._Element:
+        """Generate XML element for joint with proper origin from connection points."""
         elem = etree.Element('joint', name=joint.name, type=joint.type.value)
 
         etree.SubElement(elem, 'parent', link=joint.parent)
         etree.SubElement(elem, 'child', link=joint.child)
 
-        elem.append(self._generate_origin_element(joint.origin))
+        # Always recalculate joint origin to account for kinematic chain offsets
+        # This is necessary because child links' frame origins are at their
+        # connection point to the parent, not at their visual center
+        joint_origin = self._calculate_joint_origin(joint, link_map, joint_map)
+
+        elem.append(self._generate_origin_element(joint_origin))
 
         # Axis (not needed for fixed joints)
         if joint.type != JointType.FIXED:
@@ -382,6 +452,67 @@ class URDFService:
             )
 
         return elem
+
+    def _calculate_joint_origin(self, joint: Joint, link_map: dict, joint_map: dict) -> Origin:
+        """Calculate the joint origin based on connection points.
+
+        In URDF, the joint origin defines the transform from the parent link frame
+        to the joint frame. The child link's frame is at the joint frame.
+
+        IMPORTANT: For child links (links that are children of another joint),
+        the link frame origin is NOT at the visual center - it's at the point
+        where the link connects to its parent (the child connection point).
+
+        So for a chain: base_link -> joint1 -> link1 -> joint2 -> link2
+        - joint1.origin is relative to base_link's frame (at visual center for root)
+        - joint2.origin is relative to link1's frame, which is at link1's
+          child_connection_point (where it connects to base_link via joint1)
+
+        Therefore: joint2.origin = link1_parent_cp - link1_child_cp
+        (where parent_cp is the connection point for joint2, and child_cp is
+        where link1 connects to its parent)
+        """
+        origin_xyz = list(joint.origin.xyz)
+        origin_rpy = list(joint.origin.rpy)
+
+        parent_link = link_map.get(joint.parent)
+        if not parent_link:
+            return Origin(xyz=tuple(origin_xyz), rpy=tuple(origin_rpy))
+
+        # Find the connection point on parent link for this joint
+        parent_cp_position = [0.0, 0.0, 0.0]
+        if joint.parent_connection_point_id:
+            for cp in parent_link.connection_points:
+                if cp.id == joint.parent_connection_point_id:
+                    parent_cp_position = list(cp.position)
+                    if cp.orientation != (0, 0, 0):
+                        origin_rpy = list(cp.orientation)
+                    break
+
+        # Check if parent_link is itself a child of another joint
+        # If so, we need to offset by its child connection point
+        parent_child_cp_position = [0.0, 0.0, 0.0]
+        parent_joint = joint_map.get(parent_link.name)  # Joint where parent_link is the child
+
+        if parent_joint and parent_joint.child_connection_point_id:
+            # Find the child connection point on parent_link
+            for cp in parent_link.connection_points:
+                if cp.id == parent_joint.child_connection_point_id:
+                    parent_child_cp_position = list(cp.position)
+                    break
+
+        # Calculate origin: parent_cp relative to parent's frame origin
+        # Parent's frame origin is at its child_connection_point (if it's a child link)
+        origin_xyz = [
+            parent_cp_position[0] - parent_child_cp_position[0],
+            parent_cp_position[1] - parent_child_cp_position[1],
+            parent_cp_position[2] - parent_child_cp_position[2],
+        ]
+
+        return Origin(
+            xyz=tuple(origin_xyz),
+            rpy=tuple(origin_rpy)
+        )
 
     def validate_urdf(self, robot: URDFRobot) -> ValidationResult:
         """Validate URDF structure."""

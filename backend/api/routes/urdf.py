@@ -55,6 +55,17 @@ async def export_urdf(robot: URDFRobot) -> Response:
 @router.post("/export/text")
 async def export_urdf_text(robot: URDFRobot) -> dict:
     """Export editor state to URDF XML as text response."""
+    # Debug: Log joint data
+    for joint in robot.joints:
+        print(f"[DEBUG] Joint '{joint.name}':")
+        print(f"  - origin.xyz: {joint.origin.xyz}")
+        print(f"  - parent_connection_point_id: {joint.parent_connection_point_id}")
+        parent_link = next((l for l in robot.links if l.name == joint.parent), None)
+        if parent_link:
+            print(f"  - Parent '{parent_link.name}' has {len(parent_link.connection_points)} connection points")
+            for cp in parent_link.connection_points:
+                print(f"    - CP '{cp.name}' (id={cp.id}): position={cp.position}")
+
     # Validate first
     result = urdf_service.validate_urdf(robot)
     if not result.valid:
